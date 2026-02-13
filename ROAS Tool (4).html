@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ROAS管理ツール</title>
+
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide-react@0.263.1/dist/umd/lucide-react.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+    <script src="https://npmcdn.com/flatpickr/dist/l10n/ja.js"></script>
+
+    <style>
+        body { font-family: "Helvetica Neue", Arial, sans-serif; }
+        .tab-active   { border-bottom: 3px solid #4f46e5; color: #4f46e5; font-weight: bold; background-color: #f8fafc; }
+        .tab-inactive { color: #64748b; }
+        .tab-inactive:hover { color: #334155; background-color: #f1f5f9; }
+        .sortable-header { cursor: pointer; transition: all 0.2s; user-select: none; }
+        .sortable-header:hover { background-color: #f1f5f9; color: #1e293b; }
+        .sortable-header:active { background-color: #e2e8f0; }
+        .num-font { font-variant-numeric: tabular-nums; }
+        @keyframes shine {
+            0%   { background-position: 0% 50%; }
+            50%  { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+        .gold-effect {
+            background: linear-gradient(90deg, #b48811, #fffacd, #b48811, #fffacd, #b48811);
+            background-size: 200% auto; color: transparent;
+            -webkit-background-clip: text; background-clip: text;
+            animation: shine 3s linear infinite; font-weight: 800;
+        }
+        .gold-container { background-color: #fffbef; border: 1px solid #b48811; box-shadow: 0 0 5px rgba(255,215,0,0.4); }
+        
+        /* 案件タブ用スタイル */
+        .project-tab-active { border-bottom: 2px solid #6366f1; color: #4f46e5; font-weight: 600; background-color: #eef2ff; }
+        .project-tab-inactive { color: #94a3b8; }
+        .project-tab-inactive:hover { color: #475569; background-color: #f8fafc; }
+    </style>
+</head>
+<body class="bg-slate-100 text-slate-800">
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useMemo, useEffect, useRef } = React;
+
+    const getIcon = (name) => { const i = window.lucideReact||window.lucide||{}; return i[name]||(() => null); };
+    const Upload      = getIcon('Upload');
+    const TrendingUp  = getIcon('TrendingUp');
+    const Users       = getIcon('Users');
+    const TableIcon   = getIcon('Table');
+    const Calendar    = getIcon('Calendar');
+    const Trash2      = getIcon('Trash2');
+    const CheckCircle = getIcon('CheckCircle');
+    const Coins       = getIcon('Coins');
+    const Target      = getIcon('Target');
+    const Wallet      = getIcon('Wallet');
+    const FileText    = getIcon('FileText');
+    const Database    = getIcon('Database');
+    const Layers      = getIcon('Layers');
+
+    // =====================================================
+    //  PG定義（案件をネストで定義）
+    // =====================================================
+    const PG_DEFINITIONS = [
+        {
+            id: 'juutaku', label: '注文住宅PG', color: 'indigo',
+            projects: [
+                { id: 'lifull', label: 'LIFULL注文住宅', keywords: ['LIFULL注文住宅'] }
+            ],
+            staffDefs: [
+                { name: '小野', codes: ['TGS0175', 'TGS0027'] },
+                { name: '小林', codes: ['TGS0109'] },
+                { name: '青崎', codes: ['TGS0179'] },
+                { name: '及川', codes: ['TGS0186'] },
+            ],
+        },
+        {
+            id: 'kango', label: '看護PG', color: 'rose',
+            projects: [
+                { id: 'mynavi', label: 'マイナビ看護', keywords: ['マイナビ看護'] },
+                { id: 'leverwell', label: 'レバウェル看護', keywords: ['レバウェル看護'] },
+                { id: 'kangoroo', label: '看護roo', keywords: ['看護roo'] },
+                { id: 'kangoworker', label: '看護師ワーカー', keywords: ['看護師ワーカー'] },
+            ],
+            staffDefs: [{ name: '青崎', codes: ['TGS0179'] }],
+        },
+        {
+            id: 'kaigo', label: '介護PG', color: 'emerald',
+            projects: [
+                { id: 'leverwell_kaigo', label: 'レバウェル介護正社員', keywords: ['レバウェル介護正社員'] },
+                { id: 'kaigogarden', label: 'かいごGarden', keywords: ['かいごGarden'] },
+                { id: 'mynavi_kaigo', label: 'マイナビ介護', keywords: ['マイナビ介護'] },
+            ],
+            staffDefs: [{ name: '青崎', codes: ['TGS0179'] }],
+        },
+        {
+            id: 'ippan', label: '一般転職PG', color: 'amber',
+            projects: [
+                { id: 'kiminara', label: 'キミナラ', keywords: ['キミナラ'] }
+            ],
+            staffDefs: [{ name: '青崎', codes: ['TGS0179'] }],
+        },
+    ];
+
+    const STORAGE_KEY_ACTION = 'roas_v10_action';
+    const STORAGE_KEY_ACTION_NAME = 'roas_v10_action_name';
+    const STORAGE_KEY_AD = 'roas_v10_ad';
+    const STORAGE_KEY_AD_NAME = 'roas_v10_ad_name';
+
+    const COLORS = {
+        indigo:  { tab: 'border-indigo-600 text-indigo-700 bg-indigo-50', dot: 'bg-indigo-500', grad: 'from-indigo-950 to-slate-900' },
+        rose:    { tab: 'border-rose-500 text-rose-700 bg-rose-50',       dot: 'bg-rose-500',   grad: 'from-rose-950 to-slate-900' },
+        emerald: { tab: 'border-emerald-600 text-emerald-700 bg-emerald-50', dot: 'bg-emerald-500', grad: 'from-emerald-950 to-slate-900' },
+        amber:   { tab: 'border-amber-500 text-amber-700 bg-amber-50',    dot: 'bg-amber-400',  grad: 'from-amber-950 to-slate-900' },
+    };
+
+    // =====================================================
+    //  ユーティリティ
+    // =====================================================
+    const parseLine = (line) => {
+        const row=[]; let v=''; let q=false;
+        for(const c of line){
+            if(c==='"'){q=!q;}
+            else if(c===','&&!q){row.push(v.trim().replace(/^"|"$/g,''));v='';}
+            else{v+=c;}
+        }
+        row.push(v.trim().replace(/^"|"$/g,''));
+        return row;
+    };
+    const parseCSV = (text) => {
+        const lines = text.replace(/\r\n/g,'\n').split('\n').filter(l=>l.trim());
+        if(lines.length<2) return [];
+        let h = lines[0].trim();
+        if(h.charCodeAt(0)===0xFEFF) h=h.slice(1);
+        const headers = parseLine(h);
+        return lines.slice(1).reduce((acc,line)=>{
+            const vals = parseLine(line);
+            if(vals.length<Math.min(headers.length,3)) return acc;
+            const row={}; headers.forEach((k,i)=>{ row[k]=vals[i]||''; });
+            acc.push(row); return acc;
+        },[]);
+    };
+    const parseNum = (val) => {
+        if(!val) return 0;
+        if(typeof val==='number') return val;
+        const n = parseFloat(val.toString().replace(/[%,、¥￥\s"']/g,''));
+        return isFinite(n)?n:0;
+    };
+    const getCol = (row, candidates) => {
+        const keys = Object.keys(row);
+        for(const k of candidates) if(row[k]!==undefined&&row[k]!=='') return row[k];
+        for(const cand of candidates){
+            const nc = cand.replace(/[\s\(\)（）"']/g,'').toLowerCase();
+            for(const rk of keys){
+                const nk = rk.replace(/[\s\(\)（）"']/g,'').toLowerCase();
+                if(nk===nc||(nc.length>2&&nk.includes(nc)))
+                    if(row[rk]!==undefined&&row[rk]!=='') return row[rk];
+            }
+        }
+        return '';
+    };
+    const extractCreative = (str) => { if(!str) return ''; const m=str.match(/utm_creative=([^&]+)/); return m?m[1]:''; };
+    const fmtYen = (n) => new Intl.NumberFormat('ja-JP',{style:'currency',currency:'JPY',maximumFractionDigits:0}).format(n||0);
+    const fmtNum = (n) => new Intl.NumberFormat('ja-JP').format(n||0);
+    const fmtPct = (n) => new Intl.NumberFormat('ja-JP',{style:'percent',minimumFractionDigits:2,maximumFractionDigits:2}).format((n||0)/100);
+
+    // =====================================================
+    //  担当者バッジ
+    // =====================================================
+    const StaffBadge = ({ name }) => {
+        if(name==='小野') return(
+            <span className="gold-container px-3 py-0.5 rounded-full text-xs flex items-center justify-center w-fit">
+                <span className="gold-effect">{name}</span>
+            </span>
+        );
+        const s = {
+            '小林':'bg-rose-100 text-rose-700 border-rose-200',
+            '青崎':'bg-blue-100 text-blue-700 border-blue-200',
+            '及川':'bg-emerald-100 text-emerald-700 border-emerald-200',
+        }[name]||'bg-slate-200 text-slate-600 border-slate-300';
+        return <span className={`${s} border px-2 py-0.5 rounded-full text-xs font-bold`}>{name}</span>;
+    };
+
+    // =====================================================
+    //  集計ロジック（プロジェクト単位）
+    // =====================================================
+    const computeData = (actionLog, adData, dateRange, selectedStaff, staffDefs, keywords) => {
+        const matchesKw = (str) => str && keywords.some(kw => str.includes(kw));
+
+        const detectStaff = (str) => {
+            if(!str) return null;
+            const u = str.toUpperCase();
+            for(const s of staffDefs) for(const code of s.codes) if(u.includes(code)) return s.name;
+            return null;
+        };
+
+        const staffMap = {};
+        staffDefs.forEach(s => { staffMap[s.name]={name:s.name,cost:0,sales:0,cv:0,clicks:0,imp:0}; });
+        staffMap['不明'] = {name:'不明',cost:0,sales:0,cv:0,clicks:0,imp:0};
+
+        const campaignMap = {};
+        const creativeToCampaign = {};
+        let adRowsCount=0, actionRowsCount=0;
+
+        // ── 媒体データ処理 ──
+        adData.forEach(row => {
+            const date = getCol(row,['日','Date','日付']);
+            if(dateRange.start && date < dateRange.start) return;
+            if(dateRange.end   && date > dateRange.end)   return;
+
+            const rawName = getCol(row,['キャンペーン名','Campaign Name','Campaign','広告の名前']);
+            if(!matchesKw(rawName)) return;
+            adRowsCount++;
+
+            const cost   = parseNum(getCol(row,['消化金額','Cost','Amount','金額']));
+            const clicks = parseNum(getCol(row,['リンクのクリック','クリック数','Clicks','クリック']));
+            let   imp    = parseNum(getCol(row,['表示回数','Impressions','Imp']));
+            const cpm    = parseNum(getCol(row,['CPM','インプレッション単価']));
+            if(imp===0&&cpm>0&&cost>0) imp=(cost/cpm)*1000;
+
+            const paramStr = getCol(row,['URLパラメーター','URL Parameters','Parameters']);
+            const staff    = detectStaff(paramStr)||detectStaff(rawName)||'不明';
+
+            const sm = staffMap[staff]||staffMap['不明'];
+            sm.cost+=cost; sm.clicks+=clicks; sm.imp+=imp;
+
+            const key = rawName;
+            const cv  = extractCreative(paramStr);
+            if(cv) creativeToCampaign[cv]=key;
+
+            if(!campaignMap[key]) campaignMap[key]={key,rawName,staff,cost:0,imp:0,clicks:0,cv:0,sales:0};
+            if(campaignMap[key].staff==='不明'&&staff!=='不明') campaignMap[key].staff=staff;
+            campaignMap[key].cost+=cost; campaignMap[key].imp+=imp; campaignMap[key].clicks+=clicks;
+        });
+
+        // ── ActionLog処理 ──
+        actionLog.forEach(row => {
+            const dateFull = getCol(row,['注文日時','Order Date']);
+            const date = dateFull ? dateFull.substring(0,10) : '';
+            if(dateRange.start && date < dateRange.start) return;
+            if(dateRange.end   && date > dateRange.end)   return;
+
+            const adName   = getCol(row,['広告名','Ad Name']);
+            const siteName = getCol(row,['サイト名','Site Name']);
+            if(!matchesKw(adName)&&!matchesKw(siteName)) return;
+            actionRowsCount++;
+
+            const checkName = siteName||adName;
+            const sales     = parseNum(getCol(row,['報酬額','売上','Sales']));
+            const staff     = detectStaff(checkName)||detectStaff(adName);
+
+            const sm = (staff&&staffMap[staff]) ? staffMap[staff] : staffMap['不明'];
+            sm.cv+=1; sm.sales+=sales;
+
+            const referer  = getCol(row,['リファラ','Referer']);
+            const creative = extractCreative(referer);
+            let matchedKey = null;
+            if(creative&&creativeToCampaign[creative]) matchedKey=creativeToCampaign[creative];
+            else if(campaignMap[checkName]) matchedKey=checkName;
+
+            if(matchedKey&&campaignMap[matchedKey]){
+                campaignMap[matchedKey].cv+=1;
+                campaignMap[matchedKey].sales+=sales;
+            }
+        });
+
+        // ── 指標計算 ──
+        const formatName = (raw) => {
+            if(!raw) return '-';
+            let n=raw; keywords.forEach(kw=>{ n=n.replace(kw,''); });
+            n=n.trim().replace(/^[_:\s\/]+/,'');
+            return n||'Standard';
+        };
+
+        const staffRows = Object.values(staffMap)
+            .filter(s=>s.cost>0||s.sales>0||s.cv>0)
+            .map(s=>({...s,
+                profit: s.sales-s.cost,
+                cpa:    s.cv>0    ? s.cost/s.cv       : 0,
+                roas:   s.cost>0  ? (s.sales/s.cost)*100 : 0,
+                ctr:    s.imp>0   ? (s.clicks/s.imp)*100 : 0,
+                cpc:    s.clicks>0? s.cost/s.clicks    : 0,
+            }));
+
+        let campaignRows = Object.values(campaignMap).map(d=>({
+            ...d,
+            displayName: formatName(d.rawName),
+            profit: d.sales-d.cost,
+            cpc:    d.clicks>0 ? d.cost/d.clicks     : 0,
+            ctr:    d.imp>0    ? (d.clicks/d.imp)*100 : 0,
+            cpm:    d.imp>0    ? (d.cost/d.imp)*1000  : 0,
+            cpa:    d.cv>0     ? d.cost/d.cv          : 0,
+            roas:   d.cost>0   ? (d.sales/d.cost)*100 : 0,
+        }));
+
+        if(selectedStaff!=='ALL') campaignRows=campaignRows.filter(r=>r.staff===selectedStaff);
+
+        const total = staffRows.reduce((a,r)=>({cost:a.cost+r.cost,sales:a.sales+r.sales,cv:a.cv+r.cv}),{cost:0,sales:0,cv:0});
+        const totalROAS   = total.cost>0 ? (total.sales/total.cost)*100 : 0;
+        const totalCPA    = total.cv>0   ? total.cost/total.cv           : 0;
+        const totalProfit = total.sales-total.cost;
+
+        return { staffRows, campaignRows, total, totalROAS, totalCPA, totalProfit, adRowsCount, actionRowsCount };
+    };
+
+    // =====================================================
+    //  PGパネル（各PGの表示）
+    // =====================================================
+    function PgPanel({ pgDef, actionLog, adData }) {
+        const [activeProject, setActiveProject] = useState(pgDef.projects[0].id);
+        const [activeTab,     setActiveTab]     = useState('staff');
+        const [selectedStaff, setSelectedStaff] = useState('ALL');
+        const [dateRange,     setDateRange]     = useState({start:'',end:''});
+        const [sortConfig,    setSortConfig]    = useState({key:'cost',direction:'desc'});
+
+        const datePickerRef = useRef(null);
+        const fpInstance    = useRef(null);
+        const colors        = COLORS[pgDef.color]||COLORS.indigo;
+
+        const currentProject = pgDef.projects.find(p => p.id === activeProject);
+
+        useEffect(()=>{
+            if(!datePickerRef.current) return;
+            fpInstance.current = flatpickr(datePickerRef.current,{
+                mode:'range', locale:'ja', dateFormat:'Y-m-d', conjunction:' ～ ',
+                onChange:(dates,_,inst)=>{
+                    if(dates.length===2) setDateRange({start:inst.formatDate(dates[0],'Y-m-d'),end:inst.formatDate(dates[1],'Y-m-d')});
+                    else if(dates.length===0) setDateRange({start:'',end:''});
+                }
+            });
+            return ()=>{ if(fpInstance.current) fpInstance.current.destroy(); };
+        },[]);
+
+        const handleSort = (key) => setSortConfig(prev=>({key, direction:prev.key===key&&prev.direction==='desc'?'asc':'desc'}));
+
+        const processedData = useMemo(
+            ()=>computeData(actionLog, adData, dateRange, selectedStaff, pgDef.staffDefs, currentProject.keywords),
+            [actionLog, adData, dateRange, selectedStaff, activeProject]
+        );
+
+        const sortedCampaignRows = useMemo(()=>{
+            const rows=[...processedData.campaignRows];
+            if(sortConfig.key) rows.sort((a,b)=>{
+                let av=a[sortConfig.key], bv=b[sortConfig.key];
+                if(typeof av==='string'){av=av.toLowerCase();bv=bv.toLowerCase();}
+                if(av<bv) return sortConfig.direction==='asc'?-1:1;
+                if(av>bv) return sortConfig.direction==='asc'?1:-1;
+                return 0;
+            });
+            return rows;
+        },[processedData.campaignRows, sortConfig]);
+
+        const SortIcon = ({colKey}) => {
+            if(sortConfig.key!==colKey) return <span className="text-slate-300 ml-1 text-xs">↕</span>;
+            return sortConfig.direction==='asc'
+                ? <span className="text-indigo-600 ml-1 text-xs font-bold">↑</span>
+                : <span className="text-indigo-600 ml-1 text-xs font-bold">↓</span>;
+        };
+
+        return (
+            <div className="space-y-4">
+                {/* 案件タブ（複数案件がある場合のみ表示） */}
+                {pgDef.projects.length > 1 && (
+                    <div className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
+                        <div className="flex items-center gap-2 px-4 py-2 bg-slate-50 border-b border-slate-200">
+                            <Layers size={14} className="text-slate-500"/>
+                            <span className="text-xs font-bold text-slate-600 uppercase">案件選択</span>
+                        </div>
+                        <div className="flex overflow-x-auto">
+                            {pgDef.projects.map(proj => (
+                                <button key={proj.id} onClick={() => setActiveProject(proj.id)}
+                                    className={`px-4 py-2.5 text-sm font-medium transition flex-shrink-0 ${activeProject === proj.id ? 'project-tab-active' : 'project-tab-inactive'}`}>
+                                    {proj.label}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {/* ステータス表示 */}
+                {(processedData.adRowsCount>0||processedData.actionRowsCount>0)&&(
+                    <div className="bg-white p-3 rounded-lg border border-slate-200 shadow-sm flex items-center gap-2">
+                        <CheckCircle size={14} className="text-emerald-500"/>
+                        <span className="text-xs text-slate-600">
+                            <strong className="text-slate-800">{currentProject.label}:</strong> 媒体データ {processedData.adRowsCount.toLocaleString()}行 / CV {processedData.actionRowsCount.toLocaleString()}件
+                        </span>
+                    </div>
+                )}
+
+                {/* フィルター + KPIサマリー */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                    {/* フィルター */}
+                    <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-200 space-y-4">
+                        <div>
+                            <div className="flex items-center gap-2 text-slate-500 font-bold text-xs uppercase mb-2">
+                                <Calendar size={13}/> 期間指定
+                            </div>
+                            <input ref={datePickerRef} type="text"
+                                className="border border-slate-300 rounded px-3 py-2 text-sm w-full focus:ring-2 focus:ring-indigo-200 outline-none bg-slate-50"
+                                placeholder="日付範囲をクリックして選択..."/>
+                        </div>
+                        <div>
+                            <div className="flex items-center gap-2 text-slate-500 font-bold text-xs uppercase mb-2">
+                                <Users size={13}/> 担当者フィルタ
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                                <button onClick={()=>setSelectedStaff('ALL')}
+                                    className={`px-4 py-2 rounded-lg text-sm font-bold transition flex-1 text-center ${selectedStaff==='ALL'?'bg-slate-800 text-white':'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                                    全員
+                                </button>
+                                {pgDef.staffDefs.map(s=>(
+                                    <button key={s.name} onClick={()=>setSelectedStaff(s.name===selectedStaff?'ALL':s.name)}
+                                        className={`px-4 py-2 rounded-lg text-sm font-bold transition flex-1 text-center ${selectedStaff===s.name?'bg-indigo-600 text-white shadow-md':'bg-indigo-50 text-indigo-700 hover:bg-indigo-100'}`}>
+                                        {s.name}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* KPIサマリー */}
+                    <div className={`bg-gradient-to-br ${colors.grad} text-white p-6 rounded-xl shadow-lg`}>
+                        <div className="grid grid-cols-2 gap-x-8 gap-y-4">
+                            <div className="col-span-2 border-b border-white/10 pb-4">
+                                <div className="text-white/50 text-xs font-bold uppercase tracking-widest mb-1 flex items-center gap-2">
+                                    <Wallet size={14} className="text-yellow-400"/> 粗利
+                                </div>
+                                <div className={`text-4xl font-bold num-font ${processedData.totalProfit>=0?'text-yellow-400':'text-red-400'}`}>
+                                    {fmtYen(processedData.totalProfit)}
+                                </div>
+                            </div>
+                            <div className="col-span-2 border-b border-white/10 pb-4">
+                                <div className="text-white/50 text-xs font-bold uppercase tracking-widest mb-1 flex items-center gap-2">
+                                    <Target size={14} className="text-emerald-400"/> ROAS
+                                </div>
+                                <div className={`text-3xl font-bold num-font ${processedData.totalROAS>=100?'text-emerald-400':'text-amber-400'}`}>
+                                    {fmtPct(processedData.totalROAS)}
+                                </div>
+                            </div>
+                            <div>
+                                <div className="text-white/50 text-xs font-bold uppercase mb-1">消化金額</div>
+                                <div className="text-lg font-bold num-font">{fmtYen(processedData.total.cost)}</div>
+                            </div>
+                            <div>
+                                <div className="text-white/50 text-xs font-bold uppercase mb-1">合計CV</div>
+                                <div className="text-lg font-bold num-font">{processedData.total.cv}<span className="text-sm font-normal text-white/40 ml-1">件</span></div>
+                            </div>
+                            <div className="col-span-2">
+                                <div className="flex items-center justify-between bg-white/5 p-3 rounded-lg border border-white/10">
+                                    <span className="text-white/60 text-sm flex items-center gap-1"><Coins size={13}/> 全体CPA</span>
+                                    <span className="text-lg font-bold num-font">{fmtYen(processedData.totalCPA)}</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* テーブル */}
+                <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                    <div className="flex border-b border-slate-200">
+                        <button onClick={()=>setActiveTab('staff')}
+                            className={`px-6 py-3 text-sm font-bold flex items-center gap-2 transition ${activeTab==='staff'?'tab-active':'tab-inactive'}`}>
+                            <Users size={15}/> 担当者別
+                        </button>
+                        <button onClick={()=>setActiveTab('campaign')}
+                            className={`px-6 py-3 text-sm font-bold flex items-center gap-2 transition ${activeTab==='campaign'?'tab-active':'tab-inactive'}`}>
+                            <TableIcon size={15}/> キャンペーン別
+                        </button>
+                    </div>
+
+                    <div className="overflow-x-auto min-h-[240px]">
+                        {activeTab==='staff' ? (
+                            <table className="w-full text-sm text-left whitespace-nowrap">
+                                <thead className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider border-b border-slate-200">
+                                    <tr>
+                                        <th className="px-6 py-3">担当者</th>
+                                        <th className="px-6 py-3 text-right">消化金額</th>
+                                        <th className="px-6 py-3 text-right">粗利</th>
+                                        <th className="px-6 py-3 text-right">CV数</th>
+                                        <th className="px-6 py-3 text-right">CPA</th>
+                                        <th className="px-6 py-3 text-right">ROAS</th>
+                                        <th className="px-6 py-3 text-right text-slate-400">CTR / CPC</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                    {processedData.staffRows.map((row,i)=>(
+                                        <tr key={i} className={`hover:bg-slate-50 ${i%2===0?'bg-white':'bg-slate-50/50'}`}>
+                                            <td className="px-6 py-3"><StaffBadge name={row.name}/></td>
+                                            <td className="px-6 py-3 text-right num-font text-slate-600">{fmtYen(row.cost)}</td>
+                                            <td className={`px-6 py-3 text-right num-font font-bold ${row.profit>=0?'text-slate-700':'text-red-500'}`}>{fmtYen(row.profit)}</td>
+                                            <td className="px-6 py-3 text-right num-font font-bold">{row.cv}</td>
+                                            <td className="px-6 py-3 text-right num-font">{fmtYen(row.cpa)}</td>
+                                            <td className={`px-6 py-3 text-right num-font font-bold ${row.roas>=100?'text-emerald-600':'text-amber-600'}`}>{fmtPct(row.roas)}</td>
+                                            <td className="px-6 py-3 text-right num-font text-xs text-slate-400">{fmtPct(row.ctr)} / {fmtYen(row.cpc)}</td>
+                                        </tr>
+                                    ))}
+                                    {processedData.staffRows.length===0&&(
+                                        <tr><td colSpan="7" className="px-6 py-10 text-center text-slate-400 text-sm">CSVをアップロードするとデータが表示されます</td></tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        ):(
+                            <table className="w-full text-sm text-left whitespace-nowrap">
+                                <thead className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider border-b border-slate-200">
+                                    <tr>
+                                        <th className="px-4 py-3 min-w-[200px] sortable-header" onClick={()=>handleSort('displayName')}>キャンペーン名 <SortIcon colKey="displayName"/></th>
+                                        <th className="px-4 py-3 sortable-header" onClick={()=>handleSort('staff')}>担当 <SortIcon colKey="staff"/></th>
+                                        <th className="px-4 py-3 text-right sortable-header" onClick={()=>handleSort('cost')}>消化金額 <SortIcon colKey="cost"/></th>
+                                        <th className="px-4 py-3 text-right sortable-header" onClick={()=>handleSort('profit')}>粗利 <SortIcon colKey="profit"/></th>
+                                        <th className="px-4 py-3 text-right sortable-header" onClick={()=>handleSort('cpm')}>CPM <SortIcon colKey="cpm"/></th>
+                                        <th className="px-4 py-3 text-right sortable-header" onClick={()=>handleSort('clicks')}>クリック数 <SortIcon colKey="clicks"/></th>
+                                        <th className="px-4 py-3 text-right sortable-header" onClick={()=>handleSort('ctr')}>CTR <SortIcon colKey="ctr"/></th>
+                                        <th className="px-4 py-3 text-right sortable-header" onClick={()=>handleSort('cpc')}>CPC <SortIcon colKey="cpc"/></th>
+                                        <th className="px-4 py-3 text-center bg-indigo-50/40 text-indigo-900 border-l border-indigo-100 sortable-header" onClick={()=>handleSort('cv')}>CV数 <SortIcon colKey="cv"/></th>
+                                        <th className="px-4 py-3 text-right bg-indigo-50/40 text-indigo-900 sortable-header" onClick={()=>handleSort('cpa')}>CPA <SortIcon colKey="cpa"/></th>
+                                        <th className="px-4 py-3 text-right bg-indigo-50/40 text-indigo-900 sortable-header" onClick={()=>handleSort('roas')}>ROAS <SortIcon colKey="roas"/></th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                    {sortedCampaignRows.map((row,i)=>(
+                                        <tr key={i} className={`hover:bg-slate-50 ${i%2===0?'bg-white':'bg-slate-50/50'}`}>
+                                            <td className="px-4 py-3"><div className="font-medium text-slate-700 truncate max-w-[280px]" title={row.displayName}>{row.displayName}</div></td>
+                                            <td className="px-4 py-3"><StaffBadge name={row.staff}/></td>
+                                            <td className="px-4 py-3 text-right num-font text-slate-600">{fmtYen(row.cost)}</td>
+                                            <td className={`px-4 py-3 text-right num-font ${row.profit>=0?'text-slate-600':'text-red-500'}`}>{fmtYen(row.profit)}</td>
+                                            <td className="px-4 py-3 text-right num-font text-slate-500 text-xs">{fmtYen(row.cpm)}</td>
+                                            <td className="px-4 py-3 text-right num-font">{fmtNum(row.clicks)}</td>
+                                            <td className="px-4 py-3 text-right num-font">{fmtPct(row.ctr)}</td>
+                                            <td className="px-4 py-3 text-right num-font">{fmtYen(row.cpc)}</td>
+                                            <td className="px-4 py-3 text-center num-font font-bold bg-indigo-50/20 border-l border-indigo-50">{row.cv}</td>
+                                            <td className="px-4 py-3 text-right num-font bg-indigo-50/20">{fmtYen(row.cpa)}</td>
+                                            <td className={`px-4 py-3 text-right num-font font-bold bg-indigo-50/20 ${row.roas>=100?'text-emerald-600':'text-amber-600'}`}>{fmtPct(row.roas)}</td>
+                                        </tr>
+                                    ))}
+                                    {sortedCampaignRows.length===0&&(
+                                        <tr><td colSpan="11" className="px-6 py-10 text-center text-slate-400 text-sm">該当データがありません</td></tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        )}
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // =====================================================
+    //  パスワード保護
+    // =====================================================
+    const PASSWORD = '1234';
+    const STORAGE_KEY_AUTH = 'roas_auth';
+
+    function PasswordScreen({ onAuth }) {
+        const [pw, setPw] = useState('');
+        const [err, setErr] = useState(false);
+
+        const submit = (e) => {
+            e.preventDefault();
+            if (pw === PASSWORD) {
+                localStorage.setItem(STORAGE_KEY_AUTH, 'ok');
+                onAuth();
+            } else {
+                setErr(true);
+                setTimeout(() => setErr(false), 2000);
+            }
+        };
+
+        return (
+            <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 to-slate-800">
+                <div className="bg-white p-8 rounded-2xl shadow-2xl max-w-md w-full mx-4">
+                    <div className="flex items-center justify-center mb-6">
+                        <div className="bg-indigo-100 p-3 rounded-full">
+                            <TrendingUp className="text-indigo-600" size={32}/>
+                        </div>
+                    </div>
+                    <h1 className="text-2xl font-bold text-center text-slate-800 mb-2">ROAS管理ツール</h1>
+                    <p className="text-center text-slate-500 text-sm mb-8">パスワードを入力してください</p>
+                    <form onSubmit={submit}>
+                        <input type="password" value={pw} onChange={(e) => setPw(e.target.value)} placeholder="パスワード" autoFocus
+                            className={`w-full px-4 py-3 border-2 rounded-lg outline-none transition ${err ? 'border-red-500 bg-red-50' : 'border-slate-300 focus:border-indigo-500'}`}
+                        />
+                        {err && <p className="text-red-500 text-sm mt-2">パスワードが違います</p>}
+                        <button type="submit" className="w-full mt-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-lg transition">
+                            ログイン
+                        </button>
+                    </form>
+                    <p className="text-center text-slate-400 text-xs mt-6">社内専用</p>
+                </div>
+            </div>
+        );
+    }
+
+    // =====================================================
+    //  App: グローバルCSV + PGタブ
+    // =====================================================
+    function App() {
+        const [authed, setAuthed] = useState(false);
+        const [actionLog,  setActionLog]  = useState([]);
+        const [actionName, setActionName] = useState('');
+        const [adData,     setAdData]     = useState([]);
+        const [adName,     setAdName]     = useState('');
+        const [activePg,   setActivePg]   = useState(PG_DEFINITIONS[0].id);
+
+        useEffect(() => {
+            if (localStorage.getItem(STORAGE_KEY_AUTH) === 'ok') setAuthed(true);
+        }, []);
+
+        useEffect(()=>{
+            try{
+                const al=localStorage.getItem(STORAGE_KEY_ACTION);
+                const an=localStorage.getItem(STORAGE_KEY_ACTION_NAME);
+                const ad=localStorage.getItem(STORAGE_KEY_AD);
+                const dn=localStorage.getItem(STORAGE_KEY_AD_NAME);
+                if(al) setActionLog(JSON.parse(al));
+                if(an) setActionName(an);
+                if(ad) setAdData(JSON.parse(ad));
+                if(dn) setAdName(dn);
+            }catch(e){}
+        },[]);
+
+        if (!authed) return <PasswordScreen onAuth={() => setAuthed(true)} />;
+
+        const handleActionUpload = (file) => {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const parsed = parseCSV(e.target.result);
+                setActionLog(parsed); setActionName(file.name);
+                localStorage.setItem(STORAGE_KEY_ACTION, JSON.stringify(parsed));
+                localStorage.setItem(STORAGE_KEY_ACTION_NAME, file.name);
+            };
+            reader.readAsText(file);
+        };
+
+        const handleAdUpload = (file) => {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const parsed = parseCSV(e.target.result);
+                setAdData(parsed); setAdName(file.name);
+                localStorage.setItem(STORAGE_KEY_AD, JSON.stringify(parsed));
+                localStorage.setItem(STORAGE_KEY_AD_NAME, file.name);
+            };
+            reader.readAsText(file);
+        };
+
+        const clearAll = () => {
+            if(!confirm('全データ（ActionLog + 媒体CSV）をクリアしますか？')) return;
+            localStorage.clear();
+            setActionLog([]); setActionName('');
+            setAdData([]); setAdName('');
+        };
+
+        const pgTabColors = {
+            indigo:  'border-b-2 border-indigo-600 text-indigo-700 bg-indigo-50/80',
+            rose:    'border-b-2 border-rose-500 text-rose-700 bg-rose-50/80',
+            emerald: 'border-b-2 border-emerald-600 text-emerald-700 bg-emerald-50/80',
+            amber:   'border-b-2 border-amber-500 text-amber-700 bg-amber-50/80',
+        };
+        const dotColors = { indigo:'bg-indigo-500', rose:'bg-rose-500', emerald:'bg-emerald-500', amber:'bg-amber-400' };
+
+        return (
+            <div className="min-h-screen max-w-[1800px] mx-auto">
+                {/* ━━━ グローバルヘッダー ━━━ */}
+                <div className="bg-white border-b border-slate-200 shadow-sm sticky top-0 z-20">
+                    <div className="px-6 pt-4 pb-0">
+                        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 mb-3">
+                            <div className="flex items-center gap-3">
+                                <TrendingUp className="text-indigo-600" size={22}/>
+                                <h1 className="text-lg font-bold text-slate-800">ROAS管理ツール</h1>
+                                <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">全PG統合版</span>
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-3">
+                                <div className="flex items-center gap-2">
+                                    <FileText size={13} className="text-emerald-500"/>
+                                    <label className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border cursor-pointer transition text-xs hover:shadow-md ${actionName?'bg-emerald-50 border-emerald-300 text-emerald-700':'bg-white border-slate-300 text-slate-500 hover:bg-slate-50'}`}>
+                                        <Upload size={12}/>
+                                        <span className="font-bold truncate max-w-[160px]">{actionName||'ActionLog.csv'}</span>
+                                        <input type="file" accept=".csv" className="hidden" onChange={e=>e.target.files[0]&&handleActionUpload(e.target.files[0])}/>
+                                    </label>
+                                    {actionLog.length>0&&<span className="text-xs text-slate-500">{actionLog.length.toLocaleString()}行</span>}
+                                </div>
+
+                                <div className="flex items-center gap-2">
+                                    <Database size={13} className="text-indigo-500"/>
+                                    <label className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border cursor-pointer transition text-xs hover:shadow-md ${adName?'bg-indigo-50 border-indigo-300 text-indigo-700':'bg-white border-slate-300 text-slate-500 hover:bg-slate-50'}`}>
+                                        <Upload size={12}/>
+                                        <span className="font-bold truncate max-w-[160px]">{adName||'媒体データ.csv'}</span>
+                                        <input type="file" accept=".csv" className="hidden" onChange={e=>e.target.files[0]&&handleAdUpload(e.target.files[0])}/>
+                                    </label>
+                                    {adData.length>0&&<span className="text-xs text-slate-500">{adData.length.toLocaleString()}行</span>}
+                                </div>
+
+                                {(actionName||adName)&&(
+                                    <button onClick={clearAll} className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg border border-transparent hover:border-red-200 transition" title="全クリア">
+                                        <Trash2 size={14}/>
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="flex gap-1">
+                            {PG_DEFINITIONS.map(pg=>{
+                                const isActive = activePg===pg.id;
+                                return(
+                                    <button key={pg.id} onClick={()=>setActivePg(pg.id)}
+                                        className={`px-5 py-2.5 text-sm flex items-center gap-2 rounded-t-lg transition font-medium ${isActive ? pgTabColors[pg.color] : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'}`}>
+                                        <span className={`w-2 h-2 rounded-full ${dotColors[pg.color]}`}/>
+                                        {pg.label}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+                </div>
+
+                <div className="p-4 md:p-6">
+                    {PG_DEFINITIONS.map(pg=>(
+                        <div key={pg.id} style={{display: activePg===pg.id ? 'block' : 'none'}}>
+                            <PgPanel pgDef={pg} actionLog={actionLog} adData={adData}/>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
